@@ -1,0 +1,22 @@
+version: '3'
+
+services:
+  app1:
+    image: pranay7401/app1
+    container_name: app1
+    ports:
+      - 8080:5000
+    volumes:
+      - ./:/usr/src/app/files
+    networks:
+      - csci5409_a1
+  app2:
+    image: pranay7401/app2
+    container_name: app2
+    volumes:
+      - ./:/usr/src/app/files
+    networks:
+      - csci5409_a1
+networks:
+  csci5409_a1:
+    driver: bridge  
