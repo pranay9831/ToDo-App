@@ -5,7 +5,7 @@ services:
     image: pranay7401/app1
     container_name: app1
     ports:
-      - 8080:5000
+      - 5000:5000
     volumes:
       - ./:/usr/src/app/files
     networks:
