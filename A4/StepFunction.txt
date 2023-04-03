@@ -1,0 +1,59 @@
+{
+  "Comment": "A state machine that receives an MQTT message through API Gateway and stores it in the appropriate SQS queue based on message type",
+  "StartAt": "DetermineMessageType",
+  "States": {
+    "DetermineMessageType": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.type",
+          "StringEquals": "CONNECT",
+          "Next": "ConnectQueue"
+        },
+        {
+          "Variable": "$.type",
+          "StringEquals": "SUBSCRIBE",
+          "Next": "SubscribeQueue"
+        },
+        {
+          "Variable": "$.type",
+          "StringEquals": "PUBLISH",
+          "Next": "PublishQueue"
+        }
+      ],
+      "Default": "Error"
+    },
+    "ConnectQueue": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
+      "Parameters": {
+        "QueueUrl": "https://sqs.us-east-1.amazonaws.com/401550115657/Connect",
+        "MessageBody.$": "$"
+      },
+      "End": true
+    },
+    "SubscribeQueue": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
+      "Parameters": {
+        "QueueUrl": "https://sqs.us-east-1.amazonaws.com/401550115657/Subscribe",
+        "MessageBody.$": "$"
+      },
+      "End": true
+    },
+    "PublishQueue": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage",
+      "Parameters": {
+        "QueueUrl": "https://sqs.us-east-1.amazonaws.com/401550115657/Publish",
+        "MessageBody.$": "$"
+      },
+      "End": true
+    },
+    "Error": {
+      "Type": "Fail",
+      "Error": "NoMatchingQueueFound",
+      "Cause": "The message type did not match any of the expected values"
+    }
+  }
+}
