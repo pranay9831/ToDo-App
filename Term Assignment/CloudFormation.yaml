@@ -1,0 +1,208 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Simple ToDo App with DynamoDB, Lambda, API Gateway, SNS, and Secrets Manager
+
+Resources:
+  # DynamoDB table for storing ToDo items
+  ToDoDynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: todo-table
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  # SNS topic for ToDo app notifications
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: ToDoSNS
+      TopicName: ToDoSNS
+
+  # Secrets Manager secret for storing SNS topic ARN
+  SecretsManagerSNSTopic:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: sns-arn
+      SecretString: !Sub '{"sns_topic_arn": "${SNSTopic}"}'
+
+  # Lambda function for handling ToDo app requests
+  ToDoLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ToDoLambda
+      Runtime: python3.8
+      Role: arn:aws:iam::401550115657:role/LabRole
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          from botocore.exceptions import ClientError
+
+          dynamodb = boto3.resource('dynamodb')
+          table_name = 'todo-table'
+          table = dynamodb.Table(table_name)
+          sns = boto3.client('sns')
+
+          def lambda_handler(event, context):
+              http_method = event['httpMethod']
+
+              # Get the SNS topic ARN from Secrets Manager
+              secrets_manager = boto3.client('secretsmanager')
+              try:
+                  response = secrets_manager.get_secret_value(SecretId='sns-arn')
+                  topic_arn = json.loads(response['SecretString'])['sns_topic_arn']
+              except ClientError as e:
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(str(e))
+                  }
+
+              if http_method == 'GET':
+                  return {'statusCode': 200, 'body': json.dumps(get_items())}
+              elif http_method == 'POST':
+                  return {'statusCode': 200, 'body': json.dumps(add_item(event, topic_arn))}
+              elif http_method == 'PUT':
+                  return {'statusCode': 200, 'body': json.dumps(update_item(event, topic_arn))}
+              elif http_method == 'DELETE':
+                  return {'statusCode': 200, 'body': json.dumps(delete_item(event, topic_arn))}
+              else:
+                  return {
+                      'statusCode': 405,
+                      'body': json.dumps('Method not allowed')
+                  }
+
+          def get_items():
+              try:
+                  response = table.scan()
+                  items = response['Items']
+                  return {'Output': items}
+
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(str(e))
+                  }
+
+          def add_item(event, topic_arn):
+              try:
+                  body = json.loads(event['body'])
+                  item = {
+                      'id': body['id'],
+                      'task': body['task'],
+                      'completed': body['completed']
+                  }
+                  table.put_item(Item=item)
+                  sns.publish(
+                      TopicArn=topic_arn,
+                      Message=json.dumps({'event': 'add_item', 'item': item})
+                  )
+                  return {'Output': item}
+
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(str(e))
+                  }
+
+          def update_item(event, topic_arn):
+              try:
+                  body = json.loads(event['body'])
+                  key = {'id': body['id']}
+                  update_expression = 'SET task = :task, completed = :completed'
+                  expression_attribute_values = {
+                      ':task': body['task'],
+                      ':completed': body['completed']
+                  }
+                  table.update_item(Key=key, UpdateExpression=update_expression, ExpressionAttributeValues=expression_attribute_values)
+                  item = table.get_item(Key=key)['Item']
+                  sns.publish(
+                      TopicArn=topic_arn,
+                      Message=json.dumps({'event': 'update_item', 'item': item})
+                  )
+                  return {'Output': item}
+
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(str(e))
+                  }
+
+          def delete_item(event, topic_arn):
+              try:
+                  body = json.loads(event['body'])
+                  key = {'id': body['id']}
+                  item = table.get_item(Key=key)['Item']
+                  table.delete_item(Key=key)
+                  sns.publish(
+                      TopicArn=topic_arn,
+                      Message=json.dumps({'event': 'delete_item', 'item': item})
+                  )
+                  return {
+                     "Output": {"message": "Successfully Deleted"}
+                  }
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(str(e))
+                  }
+
+  # API Gateway for the ToDo app
+  ToDoAppApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: ToDoAppApi
+
+  # API Gateway resource for /todos
+  ToDoAppApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ToDoAppApi
+      ParentId: !GetAtt ToDoAppApi.RootResourceId
+      PathPart: todos
+
+  # API Gateway method for handling any HTTP method for /todos
+  ToDoAppApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ToDoAppApi
+      ResourceId: !Ref ToDoAppApiResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ToDoLambda.Arn}/invocations
+        Credentials: arn:aws:iam::401550115657:role/LabRole
+      MethodResponses:
+        - StatusCode: 200
+
+  # API Gateway deployment
+  ToDoAppApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: ToDoAppApiMethod
+    Properties:
+      RestApiId: !Ref ToDoAppApi
+      StageName: prod
+
+  # Lambda permission to allow API Gateway to invoke the Lambda function
+  LambdaApiGatewayInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ToDoLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ToDoAppApi}/*/*/*
+
+Outputs:
+  ToDoAppApiUrl:
+    Description: The URL of the ToDo App API
+    Value: !Sub https://${ToDoAppApi}.execute-api.${AWS::Region}.amazonaws.com/prod/
+
+
