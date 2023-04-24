@@ -37,7 +37,7 @@ Resources:
     Properties:
       FunctionName: ToDoLambda
       Runtime: python3.8
-      Role: arn:aws:iam::401550115657:role/LabRole
+      Role: arn:aws:iam::******:role/LabRole
       Handler: index.lambda_handler
       Code:
         ZipFile: |
@@ -179,7 +179,7 @@ Resources:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
         Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ToDoLambda.Arn}/invocations
-        Credentials: arn:aws:iam::401550115657:role/LabRole
+        Credentials: arn:aws:iam::******:role/LabRole
       MethodResponses:
         - StatusCode: 200
 
